@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const fs require("fs");
+const fs  = require("fs");
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -24,18 +24,6 @@ function savePlayers() {
 
 // Load on startup
 loadPlayers();
-
-// Register player
-app.post("/register", (req, res) => {
-    const username = req.body.username;
-
-    if (username && !players.includes(username)) {
-        players.push(username);
-        console.log("Registered:", username);
-    }
-
-    res.send("OK");
-});
 
 app.get("/register", (req, res) => {
     const username = req.query.username?.toLowerCase();
