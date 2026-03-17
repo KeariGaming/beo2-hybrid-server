@@ -94,6 +94,24 @@ app.get("/setTag", async (req, res) => {
     }
 });
 
+app.get("/getPlayer", async (req, res) => {
+    const username = req.query.username?.toLowerCase();
+    if (!username) return res.send("No username");
+
+    try {
+        const player = await collection.findOne({ name: username });
+
+        if (!player) {
+            return res.json({ tag: "[PLAYER]" }); // default fallback
+        }
+
+        res.json({ tag: player.tag });
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error");
+    }
+});
+
 // Flash crossdomain
 app.get("/crossdomain.xml", (req, res) => {
     res.type("application/xml");
