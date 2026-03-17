@@ -102,7 +102,7 @@ app.get("/getPlayer", async (req, res) => {
         const player = await collection.findOne({ name: username });
 
         if (!player) {
-            return res.json({ tag: "[PLAYER]" }); // default fallback
+            return res.json({}); // default fallback
         }
 
         res.json({ tag: player.tag });
