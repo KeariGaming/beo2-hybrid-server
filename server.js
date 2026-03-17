@@ -24,6 +24,8 @@ start();
 
 // Register player
 app.get("/register", async (req, res) => {
+    if (!collection) return res.send("DB not ready");
+
     const username = req.query.username?.toLowerCase();
     if (!username) return res.send("No username");
 
@@ -47,6 +49,8 @@ app.get("/register", async (req, res) => {
 
 // Get all players
 app.get("/players", async (req, res) => {
+    if (!collection) return res.send("DB not ready");
+
     try {
         const players = await collection.find().toArray();
         res.json(players);
@@ -54,10 +58,12 @@ app.get("/players", async (req, res) => {
         console.error(err);
         res.status(500).send("Error");
     }
-});
+});;
 
 // Change tag
 app.get("/setTag", async (req, res) => {
+    if (!collection) return res.send("DB not ready");
+
     const username = req.query.user?.toLowerCase();
     const tag = req.query.tag;
 
