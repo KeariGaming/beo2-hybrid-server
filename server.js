@@ -1,52 +1,83 @@
 const express = require("express");
-const app = express();
-const fs  = require("fs");
+const { MongoClient } = require("mongodb");
 
-app.use(express.urlencoded({ extended: true }));
+const app = express();
 app.use(express.json());
 
-let players = [];
+const uri = "mongodb+srv://keari0010_db_user:o7B7cRFyfcHb10Au@beo2hybridserver.qnqgzo8.mongodb.net/?retryWrites=true&w=majority&appName=BEO2HybridServer";
+const client = new MongoClient(uri);
 
-// Load players from file
-function loadPlayers() {
+let collection;
+
+// Connect to MongoDB
+async function start() {
     try {
-        const data = fs.readFileSync("players.json");
-        players = JSON.parse(data);
+        await client.connect();
+        const db = client.db("beo2");
+        collection = db.collection("players");
+        console.log("MongoDB connected");
     } catch (err) {
-        players = [];
+        console.error("MongoDB connection error:", err);
     }
 }
 
-// Save players to file
-function savePlayers() {
-    fs.writeFileSync("players.json", JSON.stringify(players, null, 2));
-}
+start();
 
-// Load on startup
-loadPlayers();
-
-app.get("/register", (req, res) => {
+// Register player
+app.get("/register", async (req, res) => {
     const username = req.query.username?.toLowerCase();
-
     if (!username) return res.send("No username");
 
-    let existing = players.find(p => p.name === username);
+    try {
+        const existing = await collection.findOne({ name: username });
 
-    if (!existing) {
-        players.push({ name: username, tag: "[PLAYER]" }); // default tag
-        savePlayers();
-        console.log("Registered:", username);
+        if (!existing) {
+            await collection.insertOne({
+                name: username,
+                tag: "[PLAYER]"
+            });
+            console.log("Registered:", username);
+        }
+
+        res.send("OK");
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error");
     }
-
-    res.send("OK");
 });
 
 // Get all players
-app.get("/players", (req, res) => {
-    res.json(players);
+app.get("/players", async (req, res) => {
+    try {
+        const players = await collection.find().toArray();
+        res.json(players);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error");
+    }
 });
 
-// Flash crossdomain
+// Change tag dynamically
+app.get("/setTag", async (req, res) => {
+    const username = req.query.user?.toLowerCase();
+    const tag = req.query.tag;
+
+    if (!username || !tag) return res.send("Missing params");
+
+    try {
+        await collection.updateOne(
+            { name: username },
+            { $set: { tag: tag } }
+        );
+
+        res.send("Tag updated");
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error");
+    }
+});
+
+// Flash crossdomain (needed for SWF)
 app.get("/crossdomain.xml", (req, res) => {
     res.type("application/xml");
     res.send(`<?xml version="1.0"?>
@@ -61,5 +92,7 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
+    console.log("Running on port", PORT);
+});
     console.log("Running on port", PORT);
 });
