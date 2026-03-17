@@ -18,6 +18,17 @@ app.post("/register", (req, res) => {
     res.send("OK");
 });
 
+app.get("/register", (req, res) => {
+    const username = req.query.username;
+
+    if (username && !players.includes(username)) {
+        players.push(username);
+        console.log("Registered (GET):", username);
+    }
+
+    res.send("OK");
+});
+
 // Get all players
 app.get("/players", (req, res) => {
     res.json(players);
