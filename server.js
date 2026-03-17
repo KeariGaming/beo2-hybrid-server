@@ -9,12 +9,22 @@ const client = new MongoClient(uri);
 
 let collection;
 
+// Start server ONLY after DB connects
 async function start() {
     try {
         await client.connect();
+
         const db = client.db("beo2");
         collection = db.collection("players");
+
         console.log("MongoDB connected");
+
+        // 🚀 START SERVER HERE (important)
+        const PORT = process.env.PORT || 3000;
+        app.listen(PORT, () => {
+            console.log("Running on port", PORT);
+        });
+
     } catch (err) {
         console.error("MongoDB connection error:", err);
     }
@@ -24,8 +34,6 @@ start();
 
 // Register player
 app.get("/register", async (req, res) => {
-    if (!collection) return res.send("DB not ready");
-
     const username = req.query.username?.toLowerCase();
     if (!username) return res.send("No username");
 
@@ -49,8 +57,6 @@ app.get("/register", async (req, res) => {
 
 // Get all players
 app.get("/players", async (req, res) => {
-    if (!collection) return res.send("DB not ready");
-
     try {
         const players = await collection.find().toArray();
         res.json(players);
@@ -58,12 +64,10 @@ app.get("/players", async (req, res) => {
         console.error(err);
         res.status(500).send("Error");
     }
-});;
+});
 
 // Change tag
 app.get("/setTag", async (req, res) => {
-    if (!collection) return res.send("DB not ready");
-
     const username = req.query.user?.toLowerCase();
     const tag = req.query.tag;
 
@@ -93,9 +97,4 @@ app.get("/crossdomain.xml", (req, res) => {
 
 app.get("/", (req, res) => {
     res.send("Server running");
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log("Running on port", PORT);
 });
