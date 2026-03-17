@@ -9,7 +9,6 @@ const client = new MongoClient(uri);
 
 let collection;
 
-// Connect to MongoDB
 async function start() {
     try {
         await client.connect();
@@ -57,7 +56,7 @@ app.get("/players", async (req, res) => {
     }
 });
 
-// Change tag dynamically
+// Change tag
 app.get("/setTag", async (req, res) => {
     const username = req.query.user?.toLowerCase();
     const tag = req.query.tag;
@@ -77,7 +76,7 @@ app.get("/setTag", async (req, res) => {
     }
 });
 
-// Flash crossdomain (needed for SWF)
+// Flash crossdomain
 app.get("/crossdomain.xml", (req, res) => {
     res.type("application/xml");
     res.send(`<?xml version="1.0"?>
@@ -92,7 +91,5 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log("Running on port", PORT);
-});
     console.log("Running on port", PORT);
 });
