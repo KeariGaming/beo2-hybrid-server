@@ -4,7 +4,7 @@ const { MongoClient } = require("mongodb");
 const app = express();
 app.use(express.json());
 
-const uri = "mongodb+srv://keari0010_db_user:o7B7cRFyfcHb10Au@beo2hybridserver.qnqgzo8.mongodb.net/?retryWrites=true&w=majority&appName=BEO2HybridServer";
+const uri = process.env.MONGO_URI;
 const client = new MongoClient(uri);
 
 let collection;
