@@ -67,7 +67,15 @@ app.get("/players", async (req, res) => {
 });
 
 // Change tag
+const ADMIN_KEY = process.env.ADMIN_KEY;
+
 app.get("/setTag", async (req, res) => {
+    const key = req.query.key;
+
+    if (key !== ADMIN_KEY) {
+        return res.status(403).send("Unauthorized");
+    }
+
     const username = req.query.user?.toLowerCase();
     const tag = req.query.tag;
 
