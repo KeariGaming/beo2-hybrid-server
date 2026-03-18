@@ -252,7 +252,7 @@ app.get("/setTag", async (req, res) => {
             { upsert: true }
         );
 
-        res.send("Tag/effect updated");
+        res.send("Tag/effect/shell updated");
     } catch (err) {
         console.error(err);
         res.status(500).send("Error");
