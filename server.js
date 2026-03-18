@@ -52,7 +52,8 @@ app.get("/register", async (req, res) => {
             await collection.insertOne({
                 name: username,
                 tag: "",
-                effect: ""
+                effect: "",
+                color: ""
             });
             console.log("Registered:", username);
         }
@@ -87,7 +88,8 @@ app.get("/getPlayer", async (req, res) => {
 
         res.json({
             tag: player.tag || "",
-            effect: player.effect || ""
+            effect: player.effect || "",
+            color: player.color || ""
         });
     } catch (err) {
         console.error(err);
@@ -104,6 +106,7 @@ app.get("/setTag", async (req, res) => {
     const username = req.query.user?.toLowerCase();
     const tag = req.query.tag ?? "";
     const effect = req.query.effect ?? "";
+    const color = req.query.color ?? "";
 
     if (!username) return res.send("Missing user");
 
@@ -113,7 +116,8 @@ app.get("/setTag", async (req, res) => {
             {
                 $set: {
                     tag: tag,
-                    effect: effect
+                    effect: effect,
+                    color: color
                 }
             },
             { upsert: true }
