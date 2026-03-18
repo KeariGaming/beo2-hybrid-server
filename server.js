@@ -5,7 +5,7 @@ const { MongoClient } = require("mongodb");
 const app = express();
 
 app.use(cors({
-    origin: "http://127.0.0.1:5500/playerConfig.html",
+    origin: "http://127.0.0.1:5500",
     methods: ["GET", "POST", "OPTIONS"]
 }));
 app.use(express.json());
