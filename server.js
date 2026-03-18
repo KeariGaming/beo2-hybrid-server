@@ -53,7 +53,8 @@ app.get("/register", async (req, res) => {
                 name: username,
                 tag: "",
                 effect: "",
-                color: ""
+                color: "",
+                shellOverride: 0
             });
             console.log("Registered:", username);
         }
@@ -89,7 +90,8 @@ app.get("/getPlayer", async (req, res) => {
         res.json({
             tag: player.tag || "",
             effect: player.effect || "",
-            color: player.color || ""
+            color: player.color || "",
+            shellOverride: player.shellOverride || 0
         });
     } catch (err) {
         console.error(err);
@@ -107,6 +109,7 @@ app.get("/setTag", async (req, res) => {
     const tag = req.query.tag ?? "";
     const effect = req.query.effect ?? "";
     const color = req.query.color ?? "";
+    const shellOverride = parseInt(req.query.shellOverride ?? "0", 10) || 0;
 
     if (!username) return res.send("Missing user");
 
@@ -117,7 +120,8 @@ app.get("/setTag", async (req, res) => {
                 $set: {
                     tag: tag,
                     effect: effect,
-                    color: color
+                    color: color,
+                    shellOverride: shellOverride
                 }
             },
             { upsert: true }
