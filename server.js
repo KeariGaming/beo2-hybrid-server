@@ -28,6 +28,20 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 const ALLOWED_SHELL_MIN = 1;
 const ALLOWED_SHELL_MAX = 10000;
 
+// optional safety limits for self-service
+const ALLOWED_TAGS = [
+    "",
+    "[DEV]",
+    "[VIP]",
+    "[MOD]",
+    "[OG]"
+];
+
+const ALLOWED_EFFECTS = [
+    "",
+    "rainbow"
+];
+
 function makeToken() {
     return crypto.randomBytes(32).toString("hex");
 }
@@ -36,9 +50,27 @@ function isValidShellOverride(value) {
     return Number.isInteger(value) && value >= ALLOWED_SHELL_MIN && value <= ALLOWED_SHELL_MAX;
 }
 
+function isAllowedTag(tag) {
+    return ALLOWED_TAGS.includes(tag);
+}
+
+function isAllowedEffect(effect) {
+    return ALLOWED_EFFECTS.includes(effect);
+}
+
 async function cleanupExpiredSessions() {
     const now = Date.now();
     await sessionsCollection.deleteMany({ expiresAt: { $lte: now } });
+}
+
+async function getValidSession(token) {
+    await cleanupExpiredSessions();
+
+    if (!token) {
+        return null;
+    }
+
+    return await sessionsCollection.findOne({ token });
 }
 
 async function start() {
@@ -160,9 +192,7 @@ app.get("/setMyShell", async (req, res) => {
     }
 
     try {
-        await cleanupExpiredSessions();
-
-        const session = await sessionsCollection.findOne({ token });
+        const session = await getValidSession(token);
 
         if (!session) {
             return res.status(403).json({ error: "Invalid or expired session" });
@@ -184,6 +214,90 @@ app.get("/setMyShell", async (req, res) => {
             ok: true,
             name: session.name,
             shellOverride
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error" });
+    }
+});
+
+app.get("/setMyTag", async (req, res) => {
+    const token = req.query.token;
+    const tag = req.query.tag ?? "";
+
+    if (!token) {
+        return res.status(400).json({ error: "Missing token" });
+    }
+
+    if (!isAllowedTag(tag)) {
+        return res.status(400).json({ error: "Invalid tag" });
+    }
+
+    try {
+        const session = await getValidSession(token);
+
+        if (!session) {
+            return res.status(403).json({ error: "Invalid or expired session" });
+        }
+
+        await playersCollection.updateOne(
+            {
+                name: session.name,
+                connectUserId: session.connectUserId
+            },
+            {
+                $set: {
+                    tag: tag
+                }
+            }
+        );
+
+        res.json({
+            ok: true,
+            name: session.name,
+            tag
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error" });
+    }
+});
+
+app.get("/setMyEffect", async (req, res) => {
+    const token = req.query.token;
+    const effect = req.query.effect ?? "";
+
+    if (!token) {
+        return res.status(400).json({ error: "Missing token" });
+    }
+
+    if (!isAllowedEffect(effect)) {
+        return res.status(400).json({ error: "Invalid effect" });
+    }
+
+    try {
+        const session = await getValidSession(token);
+
+        if (!session) {
+            return res.status(403).json({ error: "Invalid or expired session" });
+        }
+
+        await playersCollection.updateOne(
+            {
+                name: session.name,
+                connectUserId: session.connectUserId
+            },
+            {
+                $set: {
+                    effect: effect
+                }
+            }
+        );
+
+        res.json({
+            ok: true,
+            name: session.name,
+            effect
         });
     } catch (err) {
         console.error(err);
