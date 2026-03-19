@@ -28,19 +28,19 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 const ALLOWED_SHELL_MIN = 1;
 const ALLOWED_SHELL_MAX = 10000;
 
-// optional safety limits for self-service
-const ALLOWED_TAGS = [
-    "",
-    "[DEV]",
-    "[VIP]",
-    "[MOD]",
-    "[OG]"
-];
+// ID -> value maps
+const TAG_ID_MAP = {
+    0: "",
+    1: "[DEV]",
+    2: "[VIP]",
+    3: "[MOD]",
+    4: "[OG]"
+};
 
-const ALLOWED_EFFECTS = [
-    "",
-    "rainbow"
-];
+const EFFECT_ID_MAP = {
+    0: "",
+    1: "rainbow"
+};
 
 function makeToken() {
     return crypto.randomBytes(32).toString("hex");
@@ -50,12 +50,12 @@ function isValidShellOverride(value) {
     return Number.isInteger(value) && value >= ALLOWED_SHELL_MIN && value <= ALLOWED_SHELL_MAX;
 }
 
-function isAllowedTag(tag) {
-    return ALLOWED_TAGS.includes(tag);
+function getTagValueFromId(id) {
+    return Object.prototype.hasOwnProperty.call(TAG_ID_MAP, id) ? TAG_ID_MAP[id] : null;
 }
 
-function isAllowedEffect(effect) {
-    return ALLOWED_EFFECTS.includes(effect);
+function getEffectValueFromId(id) {
+    return Object.prototype.hasOwnProperty.call(EFFECT_ID_MAP, id) ? EFFECT_ID_MAP[id] : null;
 }
 
 async function cleanupExpiredSessions() {
@@ -223,14 +223,15 @@ app.get("/setMyShell", async (req, res) => {
 
 app.get("/setMyTag", async (req, res) => {
     const token = req.query.token;
-    const tag = req.query.tag ?? "";
+    const tagId = parseInt(req.query.tagId ?? "0", 10);
+    const tagValue = getTagValueFromId(tagId);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (!isAllowedTag(tag)) {
-        return res.status(400).json({ error: "Invalid tag" });
+    if (tagValue === null) {
+        return res.status(400).json({ error: "Invalid tagId" });
     }
 
     try {
@@ -247,7 +248,7 @@ app.get("/setMyTag", async (req, res) => {
             },
             {
                 $set: {
-                    tag: tag
+                    tag: tagValue
                 }
             }
         );
@@ -255,7 +256,8 @@ app.get("/setMyTag", async (req, res) => {
         res.json({
             ok: true,
             name: session.name,
-            tag
+            tagId,
+            tag: tagValue
         });
     } catch (err) {
         console.error(err);
@@ -265,14 +267,15 @@ app.get("/setMyTag", async (req, res) => {
 
 app.get("/setMyEffect", async (req, res) => {
     const token = req.query.token;
-    const effect = req.query.effect ?? "";
+    const effectId = parseInt(req.query.effectId ?? "0", 10);
+    const effectValue = getEffectValueFromId(effectId);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (!isAllowedEffect(effect)) {
-        return res.status(400).json({ error: "Invalid effect" });
+    if (effectValue === null) {
+        return res.status(400).json({ error: "Invalid effectId" });
     }
 
     try {
@@ -289,7 +292,7 @@ app.get("/setMyEffect", async (req, res) => {
             },
             {
                 $set: {
-                    effect: effect
+                    effect: effectValue
                 }
             }
         );
@@ -297,7 +300,8 @@ app.get("/setMyEffect", async (req, res) => {
         res.json({
             ok: true,
             name: session.name,
-            effect
+            effectId,
+            effect: effectValue
         });
     } catch (err) {
         console.error(err);
