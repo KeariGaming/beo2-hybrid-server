@@ -73,6 +73,10 @@ async function getValidSession(token) {
     return await sessionsCollection.findOne({ token });
 }
 
+function nowTs() {
+    return Date.now();
+}
+
 async function start() {
     try {
         await client.connect();
@@ -83,6 +87,8 @@ async function start() {
 
         await sessionsCollection.createIndex({ token: 1 }, { unique: true });
         await sessionsCollection.createIndex({ expiresAt: 1 });
+        await playersCollection.createIndex({ name: 1 }, { unique: true });
+        await playersCollection.createIndex({ updatedAt: 1 });
 
         console.log("MongoDB connected");
 
@@ -111,7 +117,10 @@ app.get("/register", async (req, res) => {
                 tag: "",
                 effect: "",
                 color: "",
-                shellOverride: 0
+                shellOverride: 0,
+                badgeOverride: 0,
+                badgeBackgroundOverride: 0,
+                updatedAt: nowTs()
             });
             console.log("Registered:", username);
         }
@@ -142,7 +151,10 @@ app.get("/registerSession", async (req, res) => {
                     tag: "",
                     effect: "",
                     color: "",
-                    shellOverride: 0
+                    shellOverride: 0,
+                    badgeOverride: 0,
+                    badgeBackgroundOverride: 0,
+                    updatedAt: nowTs()
                 },
                 $set: {
                     connectUserId: connectUserId
@@ -205,7 +217,8 @@ app.get("/setMyShell", async (req, res) => {
             },
             {
                 $set: {
-                    shellOverride: shellOverride
+                    shellOverride: shellOverride,
+                    updatedAt: nowTs()
                 }
             }
         );
@@ -248,7 +261,8 @@ app.get("/setMyTag", async (req, res) => {
             },
             {
                 $set: {
-                    tag: tagValue
+                    tag: tagValue,
+                    updatedAt: nowTs()
                 }
             }
         );
@@ -292,7 +306,8 @@ app.get("/setMyEffect", async (req, res) => {
             },
             {
                 $set: {
-                    effect: effectValue
+                    effect: effectValue,
+                    updatedAt: nowTs()
                 }
             }
         );
@@ -334,11 +349,53 @@ app.get("/getPlayer", async (req, res) => {
             tag: player.tag || "",
             effect: player.effect || "",
             color: player.color || "",
-            shellOverride: player.shellOverride || 0
+            shellOverride: player.shellOverride || 0,
+            badgeOverride: player.badgeOverride || 0,
+            badgeBackgroundOverride: player.badgeBackgroundOverride || 0,
+            updatedAt: player.updatedAt || 0
         });
     } catch (err) {
         console.error(err);
         res.status(500).send("Error");
+    }
+});
+
+app.get("/getRoomHybridUpdates", async (req, res) => {
+    const usersParam = req.query.users;
+    const since = parseInt(req.query.since ?? "0", 10) || 0;
+
+    if (!usersParam) {
+        return res.json([]);
+    }
+
+    const usernames = String(usersParam)
+        .split(",")
+        .map(x => x.trim().toLowerCase())
+        .filter(Boolean);
+
+    if (usernames.length === 0) {
+        return res.json([]);
+    }
+
+    try {
+        const players = await playersCollection.find({
+            name: { $in: usernames },
+            updatedAt: { $gt: since }
+        }).toArray();
+
+        res.json(players.map(player => ({
+            name: player.name,
+            tag: player.tag || "",
+            effect: player.effect || "",
+            color: player.color || "",
+            shellOverride: player.shellOverride || 0,
+            badgeOverride: player.badgeOverride || 0,
+            badgeBackgroundOverride: player.badgeBackgroundOverride || 0,
+            updatedAt: player.updatedAt || 0
+        })));
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error" });
     }
 });
 
@@ -353,6 +410,8 @@ app.get("/setTag", async (req, res) => {
     const effect = req.query.effect ?? "";
     const color = req.query.color ?? "";
     const shellOverride = parseInt(req.query.shellOverride ?? "0", 10) || 0;
+    const badgeOverride = parseInt(req.query.badgeOverride ?? "0", 10) || 0;
+    const badgeBackgroundOverride = parseInt(req.query.badgeBackgroundOverride ?? "0", 10) || 0;
 
     if (!username) return res.send("Missing user");
 
@@ -364,7 +423,10 @@ app.get("/setTag", async (req, res) => {
                     tag,
                     effect,
                     color,
-                    shellOverride
+                    shellOverride,
+                    badgeOverride,
+                    badgeBackgroundOverride,
+                    updatedAt: nowTs()
                 }
             },
             { upsert: true }
