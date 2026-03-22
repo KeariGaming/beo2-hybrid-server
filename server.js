@@ -39,7 +39,8 @@ const TAG_ID_MAP = {
 
 const EFFECT_ID_MAP = {
     0: "",
-    1: "rainbow"
+    1: "rainbow",
+    2: "gold"
 };
 
 function makeToken() {
