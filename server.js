@@ -206,7 +206,7 @@ async function start() {
 
         await playersCollection.createIndex({ name: 1 }, { unique: true });
         await playersCollection.createIndex({ updatedAt: 1 });
-
+        
         await sessionsCollection.deleteMany({
            $or: [
               { tokenHash: { $exists: false } },
@@ -223,13 +223,9 @@ async function start() {
            }
         );
 
-        await sessionsCollection.createIndex(
-           { expiresAt: 1 },
-           { expireAfterSeconds: 0 }
-        );
+        await sessionsCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
         await sessionsCollection.createIndex({ name: 1 });
         await sessionsCollection.createIndex({ connectUserId: 1 });
-
         console.log("MongoDB connected");
 
         app.listen(PORT, () => {
