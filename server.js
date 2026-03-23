@@ -207,8 +207,26 @@ async function start() {
         await playersCollection.createIndex({ name: 1 }, { unique: true });
         await playersCollection.createIndex({ updatedAt: 1 });
 
-        await sessionsCollection.createIndex({ tokenHash: 1 }, { unique: true });
-        await sessionsCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+        await sessionsCollection.deleteMany({
+           $or: [
+              { tokenHash: { $exists: false } },
+              { tokenHash: null },
+              { expiresAt: { $lte: Date.now() } }
+           ]
+        });
+
+        await sessionsCollection.createIndex(
+           { tokenHash: 1 },
+           {
+              unique: true,
+              partialFilterExpression: { tokenHash: { $type: "string" } }
+           }
+        );
+
+        await sessionsCollection.createIndex(
+           { expiresAt: 1 },
+           { expireAfterSeconds: 0 }
+        );
         await sessionsCollection.createIndex({ name: 1 });
         await sessionsCollection.createIndex({ connectUserId: 1 });
 
