@@ -4,20 +4,49 @@ const crypto = require("crypto");
 const { MongoClient } = require("mongodb");
 
 const app = express();
+app.disable("x-powered-by");
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "http://127.0.0.1:5500,http://localhost:5500")
+    .split(",")
+    .map(x => x.trim())
+    .filter(Boolean);
+
+const CROSSDOMAIN_ALLOWED = (process.env.CROSSDOMAIN_ALLOWED || "*")
+    .split(",")
+    .map(x => x.trim())
+    .filter(Boolean);
 
 app.use(cors({
-    origin: [
-        "http://127.0.0.1:5500",
-        "http://localhost:5500"
-    ],
-    methods: ["GET", "POST", "OPTIONS"]
+    origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "16kb" }));
+app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+
+app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cache-Control", "no-store");
+    next();
+});
 
 const uri = process.env.MONGO_URI;
 const ADMIN_KEY = process.env.ADMIN_KEY;
+const PORT = process.env.PORT || 3000;
+
+if (!uri) {
+    throw new Error("Missing MONGO_URI");
+}
+if (!ADMIN_KEY) {
+    throw new Error("Missing ADMIN_KEY");
+}
 
 const client = new MongoClient(uri);
 
@@ -27,8 +56,8 @@ let sessionsCollection;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 const ALLOWED_SHELL_MIN = 1;
 const ALLOWED_SHELL_MAX = 10000;
+const MAX_ROOM_USERS = 50;
 
-// ID -> value maps
 const TAG_ID_MAP = {
     0: "",
     1: "[DEV]",
@@ -44,8 +73,18 @@ const EFFECT_ID_MAP = {
     3: "flame"
 };
 
+const rateStore = new Map();
+
 function makeToken() {
     return crypto.randomBytes(32).toString("hex");
+}
+
+function hashToken(token) {
+    return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
+function nowTs() {
+    return Date.now();
 }
 
 function isValidShellOverride(value) {
@@ -60,23 +99,101 @@ function getEffectValueFromId(id) {
     return Object.prototype.hasOwnProperty.call(EFFECT_ID_MAP, id) ? EFFECT_ID_MAP[id] : null;
 }
 
-async function cleanupExpiredSessions() {
-    const now = Date.now();
-    await sessionsCollection.deleteMany({ expiresAt: { $lte: now } });
+function isValidUsername(name) {
+    return typeof name === "string" && /^[a-z0-9_]{3,20}$/.test(name);
 }
 
-async function getValidSession(token) {
-    await cleanupExpiredSessions();
+function isValidConnectUserId(value) {
+    return typeof value === "string" && /^[A-Za-z0-9_\-:.]{6,128}$/.test(value);
+}
 
-    if (!token) {
+function sanitizeUsername(name) {
+    return String(name || "").trim().toLowerCase();
+}
+
+function getClientIp(req) {
+    return (
+        req.headers["cf-connecting-ip"] ||
+        req.headers["x-forwarded-for"] ||
+        req.socket.remoteAddress ||
+        "unknown"
+    ).toString().split(",")[0].trim();
+}
+
+function rateLimit(limit, windowMs) {
+    return (req, res, next) => {
+        const key = `${getClientIp(req)}|${req.path}`;
+        const currentTime = nowTs();
+        let entry = rateStore.get(key);
+
+        if (!entry || entry.resetAt <= currentTime) {
+            entry = { count: 0, resetAt: currentTime + windowMs };
+            rateStore.set(key, entry);
+        }
+
+        entry.count++;
+
+        if (entry.count > limit) {
+            return res.status(429).json({ error: "Too many requests" });
+        }
+
+        next();
+    };
+}
+
+function requireAdmin(req, res, next) {
+    const auth = req.headers.authorization || "";
+    const prefix = "Bearer ";
+    if (!auth.startsWith(prefix)) {
+        return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const token = auth.slice(prefix.length);
+    if (token !== ADMIN_KEY) {
+        return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    next();
+}
+
+async function getValidSession(rawToken) {
+    if (!rawToken) {
         return null;
     }
 
-    return await sessionsCollection.findOne({ token });
+    const tokenHash = hashToken(rawToken);
+    const session = await sessionsCollection.findOne({ tokenHash });
+
+    if (!session) {
+        return null;
+    }
+
+    if (session.expiresAt <= nowTs()) {
+        await sessionsCollection.deleteOne({ _id: session._id });
+        return null;
+    }
+
+    return session;
 }
 
-function nowTs() {
-    return Date.now();
+async function ensurePlayerExists(username) {
+    await playersCollection.updateOne(
+        { name: username },
+        {
+            $setOnInsert: {
+                name: username,
+                connectUserId: "",
+                tag: "",
+                effect: "",
+                color: "",
+                shellOverride: 0,
+                badgeOverride: 0,
+                badgeBackgroundOverride: 0,
+                updatedAt: nowTs()
+            }
+        },
+        { upsert: true }
+    );
 }
 
 async function start() {
@@ -87,115 +204,141 @@ async function start() {
         playersCollection = db.collection("players");
         sessionsCollection = db.collection("sessions");
 
-        await sessionsCollection.createIndex({ token: 1 }, { unique: true });
-        await sessionsCollection.createIndex({ expiresAt: 1 });
         await playersCollection.createIndex({ name: 1 }, { unique: true });
         await playersCollection.createIndex({ updatedAt: 1 });
 
+        await sessionsCollection.createIndex({ tokenHash: 1 }, { unique: true });
+        await sessionsCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+        await sessionsCollection.createIndex({ name: 1 });
+        await sessionsCollection.createIndex({ connectUserId: 1 });
+
         console.log("MongoDB connected");
 
-        const PORT = process.env.PORT || 3000;
         app.listen(PORT, () => {
             console.log("Running on port", PORT);
         });
     } catch (err) {
         console.error("MongoDB connection error:", err);
+        process.exit(1);
     }
 }
 
 start();
 
-app.get("/register", async (req, res) => {
-    const username = req.query.username?.toLowerCase();
-    if (!username) return res.send("No username");
+app.get("/", (req, res) => {
+    res.send("Server running");
+});
+
+app.get("/crossdomain.xml", (req, res) => {
+    res.type("application/xml");
+    const xml = [
+        '<?xml version="1.0"?>',
+        "<cross-domain-policy>",
+        ...CROSSDOMAIN_ALLOWED.map(domain => `   <allow-access-from domain="${domain}" />`),
+        "</cross-domain-policy>"
+    ].join("\n");
+    res.send(xml);
+});
+
+app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
+    const username = sanitizeUsername(req.query.username);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).send("Invalid username");
+    }
 
     try {
-        const existing = await playersCollection.findOne({ name: username });
-
-        if (!existing) {
-            await playersCollection.insertOne({
-                name: username,
-                connectUserId: "",
-                tag: "",
-                effect: "",
-                color: "",
-                shellOverride: 0,
-                badgeOverride: 0,
-                badgeBackgroundOverride: 0,
-                updatedAt: nowTs()
-            });
-            console.log("Registered:", username);
-        }
-
-        res.send("OK");
+        await ensurePlayerExists(username);
+        return res.send("OK");
     } catch (err) {
-        console.error(err);
-        res.status(500).send("Error");
+        console.error("register error:", err);
+        return res.status(500).send("Error");
     }
 });
 
-app.get("/registerSession", async (req, res) => {
-    const username = req.query.username?.toLowerCase();
-    const connectUserId = req.query.connectUserId;
+app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
+    const username = sanitizeUsername(req.body.username);
+    const connectUserId = String(req.body.connectUserId || "").trim();
 
-    if (!username || !connectUserId) {
-        return res.status(400).json({ error: "Missing username or connectUserId" });
+    if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
+        return res.status(400).json({ error: "Invalid username or connectUserId" });
     }
 
     try {
-        await cleanupExpiredSessions();
+        await ensurePlayerExists(username);
 
-        await playersCollection.updateOne(
-            { name: username },
-            {
-                $setOnInsert: {
-                    name: username,
-                    tag: "",
-                    effect: "",
-                    color: "",
-                    shellOverride: 0,
-                    badgeOverride: 0,
-                    badgeBackgroundOverride: 0,
-                    updatedAt: nowTs()
-                },
-                $set: {
-                    connectUserId: connectUserId
+        const existingPlayer = await playersCollection.findOne({ name: username });
+
+        if (!existingPlayer) {
+            return res.status(500).json({ error: "Player lookup failed" });
+        }
+
+        if (
+            existingPlayer.connectUserId &&
+            existingPlayer.connectUserId !== "" &&
+            existingPlayer.connectUserId !== connectUserId
+        ) {
+            return res.status(403).json({
+                error: "Username already bound to a different connectUserId"
+            });
+        }
+
+        const conflict = await playersCollection.findOne({
+            connectUserId,
+            name: { $ne: username }
+        });
+
+        if (conflict) {
+            return res.status(403).json({
+                error: "connectUserId already bound to another username"
+            });
+        }
+
+        if (!existingPlayer.connectUserId) {
+            await playersCollection.updateOne(
+                { name: username },
+                {
+                    $set: {
+                        connectUserId,
+                        updatedAt: nowTs()
+                    }
                 }
-            },
-            { upsert: true }
-        );
+            );
+        }
 
         const token = makeToken();
-        const expiresAt = Date.now() + SESSION_TTL_MS;
+        const tokenHash = hashToken(token);
+        const expiresAt = nowTs() + SESSION_TTL_MS;
 
         await sessionsCollection.deleteMany({
             $or: [
                 { name: username },
-                { connectUserId: connectUserId }
+                { connectUserId }
             ]
         });
 
         await sessionsCollection.insertOne({
-            token,
+            tokenHash,
             name: username,
             connectUserId,
-            expiresAt
+            expiresAt,
+            createdAt: nowTs()
         });
 
-        res.json({
+        return res.json({
             ok: true,
             token,
             expiresAt
         });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error" });
+        console.error("registerSession error:", err);
+        return res.status(500).json({ error: "Error" });
     }
 });
 
-app.get("/setMyShell", async (req, res) => {
-    const token = req.query.token;
-    const shellOverride = parseInt(req.query.shellOverride ?? "0", 10);
+app.post("/setMyShell", rateLimit(60, 60 * 1000), async (req, res) => {
+    const token = String(req.body.token || "");
+    const shellOverride = parseInt(req.body.shellOverride, 10);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
@@ -213,32 +356,29 @@ app.get("/setMyShell", async (req, res) => {
         }
 
         await playersCollection.updateOne(
-            {
-                name: session.name,
-                connectUserId: session.connectUserId
-            },
+            { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
-                    shellOverride: shellOverride,
+                    shellOverride,
                     updatedAt: nowTs()
                 }
             }
         );
 
-        res.json({
+        return res.json({
             ok: true,
             name: session.name,
             shellOverride
         });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error" });
+        console.error("setMyShell error:", err);
+        return res.status(500).json({ error: "Error" });
     }
 });
 
-app.get("/setMyTag", async (req, res) => {
-    const token = req.query.token;
-    const tagId = parseInt(req.query.tagId ?? "0", 10);
+app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
+    const token = String(req.body.token || "");
+    const tagId = parseInt(req.body.tagId, 10);
     const tagValue = getTagValueFromId(tagId);
 
     if (!token) {
@@ -257,10 +397,7 @@ app.get("/setMyTag", async (req, res) => {
         }
 
         await playersCollection.updateOne(
-            {
-                name: session.name,
-                connectUserId: session.connectUserId
-            },
+            { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
                     tag: tagValue,
@@ -269,21 +406,21 @@ app.get("/setMyTag", async (req, res) => {
             }
         );
 
-        res.json({
+        return res.json({
             ok: true,
             name: session.name,
             tagId,
             tag: tagValue
         });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error" });
+        console.error("setMyTag error:", err);
+        return res.status(500).json({ error: "Error" });
     }
 });
 
-app.get("/setMyEffect", async (req, res) => {
-    const token = req.query.token;
-    const effectId = parseInt(req.query.effectId ?? "0", 10);
+app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
+    const token = String(req.body.token || "");
+    const effectId = parseInt(req.body.effectId, 10);
     const effectValue = getEffectValueFromId(effectId);
 
     if (!token) {
@@ -302,10 +439,7 @@ app.get("/setMyEffect", async (req, res) => {
         }
 
         await playersCollection.updateOne(
-            {
-                name: session.name,
-                connectUserId: session.connectUserId
-            },
+            { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
                     effect: effectValue,
@@ -314,40 +448,47 @@ app.get("/setMyEffect", async (req, res) => {
             }
         );
 
-        res.json({
+        return res.json({
             ok: true,
             name: session.name,
             effectId,
             effect: effectValue
         });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error" });
+        console.error("setMyEffect error:", err);
+        return res.status(500).json({ error: "Error" });
     }
 });
 
-app.get("/players", async (req, res) => {
-    try {
-        const players = await playersCollection.find().toArray();
-        res.json(players);
-    } catch (err) {
-        console.error(err);
-        res.status(500).send("Error");
+app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
+    const username = sanitizeUsername(req.query.username);
+
+    if (!isValidUsername(username)) {
+        return res.json({});
     }
-});
-
-app.get("/getPlayer", async (req, res) => {
-    const username = req.query.username?.toLowerCase();
-    if (!username) return res.send("No username");
 
     try {
-        const player = await playersCollection.findOne({ name: username });
+        const player = await playersCollection.findOne(
+            { name: username },
+            {
+                projection: {
+                    _id: 0,
+                    tag: 1,
+                    effect: 1,
+                    color: 1,
+                    shellOverride: 1,
+                    badgeOverride: 1,
+                    badgeBackgroundOverride: 1,
+                    updatedAt: 1
+                }
+            }
+        );
 
         if (!player) {
             return res.json({});
         }
 
-        res.json({
+        return res.json({
             tag: player.tag || "",
             effect: player.effect || "",
             color: player.color || "",
@@ -357,35 +498,56 @@ app.get("/getPlayer", async (req, res) => {
             updatedAt: player.updatedAt || 0
         });
     } catch (err) {
-        console.error(err);
-        res.status(500).send("Error");
+        console.error("getPlayer error:", err);
+        return res.status(500).send("Error");
     }
 });
 
-app.get("/getRoomHybridUpdates", async (req, res) => {
-    const usersParam = req.query.users;
+app.get("/getRoomHybridUpdates", rateLimit(120, 60 * 1000), async (req, res) => {
+    const usersParam = String(req.query.users || "");
     const since = parseInt(req.query.since ?? "0", 10) || 0;
 
     if (!usersParam) {
         return res.json([]);
     }
 
-    const usernames = String(usersParam)
-        .split(",")
-        .map(x => x.trim().toLowerCase())
-        .filter(Boolean);
+    const usernames = [...new Set(
+        usersParam
+            .split(",")
+            .map(x => sanitizeUsername(x))
+            .filter(x => isValidUsername(x))
+    )];
 
     if (usernames.length === 0) {
         return res.json([]);
     }
 
-    try {
-        const players = await playersCollection.find({
-            name: { $in: usernames },
-            updatedAt: { $gt: since }
-        }).toArray();
+    if (usernames.length > MAX_ROOM_USERS) {
+        return res.status(400).json({ error: "Too many users" });
+    }
 
-        res.json(players.map(player => ({
+    try {
+        const players = await playersCollection.find(
+            {
+                name: { $in: usernames },
+                updatedAt: { $gt: since }
+            },
+            {
+                projection: {
+                    _id: 0,
+                    name: 1,
+                    tag: 1,
+                    effect: 1,
+                    color: 1,
+                    shellOverride: 1,
+                    badgeOverride: 1,
+                    badgeBackgroundOverride: 1,
+                    updatedAt: 1
+                }
+            }
+        ).toArray();
+
+        return res.json(players.map(player => ({
             name: player.name,
             tag: player.tag || "",
             effect: player.effect || "",
@@ -396,28 +558,35 @@ app.get("/getRoomHybridUpdates", async (req, res) => {
             updatedAt: player.updatedAt || 0
         })));
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error" });
+        console.error("getRoomHybridUpdates error:", err);
+        return res.status(500).json({ error: "Error" });
     }
 });
 
-app.get("/setTag", async (req, res) => {
-    const key = req.query.key;
-    if (key !== ADMIN_KEY) {
-        return res.status(403).send("Unauthorized");
+app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const tag = String(req.body.tag ?? "");
+    const effect = String(req.body.effect ?? "");
+    const color = String(req.body.color ?? "");
+    const shellOverride = parseInt(req.body.shellOverride ?? "0", 10) || 0;
+    const badgeOverride = parseInt(req.body.badgeOverride ?? "0", 10) || 0;
+    const badgeBackgroundOverride = parseInt(req.body.badgeBackgroundOverride ?? "0", 10) || 0;
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
     }
 
-    const username = req.query.user?.toLowerCase();
-    const tag = req.query.tag ?? "";
-    const effect = req.query.effect ?? "";
-    const color = req.query.color ?? "";
-    const shellOverride = parseInt(req.query.shellOverride ?? "0", 10) || 0;
-    const badgeOverride = parseInt(req.query.badgeOverride ?? "0", 10) || 0;
-    const badgeBackgroundOverride = parseInt(req.query.badgeBackgroundOverride ?? "0", 10) || 0;
+    if (tag.length > 32 || effect.length > 32 || color.length > 32) {
+        return res.status(400).json({ error: "Field too long" });
+    }
 
-    if (!username) return res.send("Missing user");
+    if (shellOverride !== 0 && !isValidShellOverride(shellOverride)) {
+        return res.status(400).json({ error: "Invalid shellOverride" });
+    }
 
     try {
+        await ensurePlayerExists(username);
+
         await playersCollection.updateOne(
             { name: username },
             {
@@ -430,25 +599,12 @@ app.get("/setTag", async (req, res) => {
                     badgeBackgroundOverride,
                     updatedAt: nowTs()
                 }
-            },
-            { upsert: true }
+            }
         );
 
-        res.send("Tag/effect/shell updated");
+        return res.json({ ok: true });
     } catch (err) {
-        console.error(err);
-        res.status(500).send("Error");
+        console.error("admin/setTag error:", err);
+        return res.status(500).json({ error: "Error" });
     }
-});
-
-app.get("/crossdomain.xml", (req, res) => {
-    res.type("application/xml");
-    res.send(`<?xml version="1.0"?>
-<cross-domain-policy>
-   <allow-access-from domain="*" />
-</cross-domain-policy>`);
-});
-
-app.get("/", (req, res) => {
-    res.send("Server running");
 });
