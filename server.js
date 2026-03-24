@@ -107,6 +107,10 @@ function isValidConnectUserId(value) {
     return typeof value === "string" && /^[A-Za-z0-9_\-:.]{6,128}$/.test(value);
 }
 
+function isValidBadgeOverride(value) {
+    return Number.isInteger(value) && value >= 0 && value <= 10000;
+}
+
 function sanitizeUsername(name) {
     return String(name || "").trim().toLowerCase();
 }
@@ -155,6 +159,7 @@ function requireAdmin(req, res, next) {
 
     next();
 }
+
 
 async function getValidSession(rawToken) {
     if (!rawToken) {
@@ -346,6 +351,86 @@ app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
         });
     } catch (err) {
         console.error("registerSession error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/setMyBadge", rateLimit(60, 60 * 1000), async (req, res) => {
+    const token = String(req.body.token || "");
+    const badgeOverride = parseInt(req.body.badgeOverride, 10);
+
+    if (!token) {
+        return res.status(400).json({ error: "Missing token" });
+    }
+
+    if (!isValidBadgeOverride(badgeOverride)) {
+        return res.status(400).json({ error: "Invalid badgeOverride" });
+    }
+
+    try {
+        const session = await getValidSession(token);
+
+        if (!session) {
+            return res.status(403).json({ error: "Invalid or expired session" });
+        }
+
+        await playersCollection.updateOne(
+            { name: session.name, connectUserId: session.connectUserId },
+            {
+                $set: {
+                    badgeOverride,
+                    updatedAt: nowTs()
+                }
+            }
+        );
+
+        return res.json({
+            ok: true,
+            name: session.name,
+            badgeOverride
+        });
+    } catch (err) {
+        console.error("setMyBadge error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/setMyBadgeBackground", rateLimit(60, 60 * 1000), async (req, res) => {
+    const token = String(req.body.token || "");
+    const badgeBackgroundOverride = parseInt(req.body.badgeBackgroundOverride, 10);
+
+    if (!token) {
+        return res.status(400).json({ error: "Missing token" });
+    }
+
+    if (!isValidBadgeOverride(badgeBackgroundOverride)) {
+        return res.status(400).json({ error: "Invalid badgeBackgroundOverride" });
+    }
+
+    try {
+        const session = await getValidSession(token);
+
+        if (!session) {
+            return res.status(403).json({ error: "Invalid or expired session" });
+        }
+
+        await playersCollection.updateOne(
+            { name: session.name, connectUserId: session.connectUserId },
+            {
+                $set: {
+                    badgeBackgroundOverride,
+                    updatedAt: nowTs()
+                }
+            }
+        );
+
+        return res.json({
+            ok: true,
+            name: session.name,
+            badgeBackgroundOverride
+        });
+    } catch (err) {
+        console.error("setMyBadgeBackground error:", err);
         return res.status(500).json({ error: "Error" });
     }
 });
