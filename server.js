@@ -57,6 +57,8 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 const ALLOWED_SHELL_MIN = 1;
 const ALLOWED_SHELL_MAX = 10000;
 const MAX_ROOM_USERS = 50;
+const EXCLUSIVE_SHELL_START_ID = 180;
+const DEFAULT_SHELL_ID = 1;
 
 const TAG_ID_MAP = {
     0: "",
@@ -72,6 +74,26 @@ const EFFECT_ID_MAP = {
     2: "gold",
     3: "flame"
 };
+
+function normalizeOwnedShells(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr
+        .map(v => parseInt(v, 10))
+        .filter(v => Number.isInteger(v));
+}
+
+function canPlayerEquipShell(playerDoc, shellId) {
+    if (!Number.isInteger(shellId)) {
+        return false;
+    }
+
+    if (shellId < EXCLUSIVE_SHELL_START_ID) {
+        return true;
+    }
+
+    const ownedShells = normalizeOwnedShells(playerDoc?.ownedShells);
+    return ownedShells.indexOf(shellId) !== -1;
+}
 
 const rateStore = new Map();
 
@@ -194,6 +216,7 @@ async function ensurePlayerExists(username) {
                 shellOverride: 0,
                 badgeOverride: 0,
                 badgeBackgroundOverride: 0,
+                ownedShells: [],
                 updatedAt: nowTs()
             }
         },
@@ -437,13 +460,13 @@ app.post("/setMyBadgeBackground", rateLimit(60, 60 * 1000), async (req, res) => 
 
 app.post("/setMyShell", rateLimit(60, 60 * 1000), async (req, res) => {
     const token = String(req.body.token || "");
-    const shellOverride = parseInt(req.body.shellOverride, 10);
+    const requestedShell = parseInt(req.body.shellOverride, 10);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (!isValidShellOverride(shellOverride)) {
+    if (!isValidShellOverride(requestedShell)) {
         return res.status(400).json({ error: "Invalid shellOverride" });
     }
 
@@ -454,11 +477,29 @@ app.post("/setMyShell", rateLimit(60, 60 * 1000), async (req, res) => {
             return res.status(403).json({ error: "Invalid or expired session" });
         }
 
+        const playerDoc = await playersCollection.findOne(
+            { name: session.name, connectUserId: session.connectUserId },
+            {
+                projection: {
+                    _id: 0,
+                    ownedShells: 1
+                }
+            }
+        );
+
+        if (!playerDoc) {
+            return res.status(404).json({ error: "Player not found" });
+        }
+
+        const finalShell = canPlayerEquipShell(playerDoc, requestedShell)
+            ? requestedShell
+            : DEFAULT_SHELL_ID;
+
         await playersCollection.updateOne(
             { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
-                    shellOverride,
+                    shellOverride: finalShell,
                     updatedAt: nowTs()
                 }
             }
@@ -467,7 +508,9 @@ app.post("/setMyShell", rateLimit(60, 60 * 1000), async (req, res) => {
         return res.json({
             ok: true,
             name: session.name,
-            shellOverride
+            shellOverride: finalShell,
+            requestedShell,
+            fallback: finalShell !== requestedShell
         });
     } catch (err) {
         console.error("setMyShell error:", err);
@@ -578,6 +621,7 @@ app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
                     shellOverride: 1,
                     badgeOverride: 1,
                     badgeBackgroundOverride: 1,
+                    ownedShells: 1,
                     updatedAt: 1
                 }
             }
@@ -594,6 +638,7 @@ app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
             shellOverride: player.shellOverride || 0,
             badgeOverride: player.badgeOverride || 0,
             badgeBackgroundOverride: player.badgeBackgroundOverride || 0,
+            ownedShells: normalizeOwnedShells(player.ownedShells),
             updatedAt: player.updatedAt || 0
         });
     } catch (err) {
@@ -704,6 +749,94 @@ app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, re
         return res.json({ ok: true });
     } catch (err) {
         console.error("admin/setTag error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/admin/grantShell", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const shellId = parseInt(req.body.shellId, 10);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
+    }
+
+    if (!isValidShellOverride(shellId)) {
+        return res.status(400).json({ error: "Invalid shellId" });
+    }
+
+    try {
+        await ensurePlayerExists(username);
+
+        await playersCollection.updateOne(
+            { name: username },
+            {
+                $addToSet: { ownedShells: shellId },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        return res.json({
+            ok: true,
+            user: username,
+            shellId
+        });
+    } catch (err) {
+        console.error("admin/grantShell error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/admin/revokeShell", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const shellId = parseInt(req.body.shellId, 10);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
+    }
+
+    if (!isValidShellOverride(shellId)) {
+        return res.status(400).json({ error: "Invalid shellId" });
+    }
+
+    try {
+        await playersCollection.updateOne(
+            { name: username },
+            {
+                $pull: { ownedShells: shellId },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        const playerDoc = await playersCollection.findOne(
+            { name: username },
+            {
+                projection: {
+                    _id: 0,
+                    shellOverride: 1
+                }
+            }
+        );
+
+        if (playerDoc && parseInt(playerDoc.shellOverride, 10) === shellId) {
+            await playersCollection.updateOne(
+                { name: username },
+                {
+                    $set: {
+                        shellOverride: DEFAULT_SHELL_ID,
+                        updatedAt: nowTs()
+                    }
+                }
+            );
+        }
+
+        return res.json({
+            ok: true,
+            user: username,
+            shellId
+        });
+    } catch (err) {
+        console.error("admin/revokeShell error:", err);
         return res.status(500).json({ error: "Error" });
     }
 });
