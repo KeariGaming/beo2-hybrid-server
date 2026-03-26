@@ -122,7 +122,7 @@ function getEffectValueFromId(id) {
 }
 
 function isValidUsername(name) {
-    return typeof name === "string" && /^[a-z0-9_]{3,20}$/.test(name);
+    return typeof name === "string" && /^[a-z0-9_ ]{3,20}$/.test(name);
 }
 
 function isValidConnectUserId(value) {
@@ -134,7 +134,10 @@ function isValidBadgeOverride(value) {
 }
 
 function sanitizeUsername(name) {
-    return String(name || "").trim().toLowerCase();
+    return String(name || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
 }
 
 function getClientIp(req) {
