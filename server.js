@@ -313,6 +313,54 @@ app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
     }
 });
 
+app.post("/hybridStatus", rateLimit(20, 60 * 1000), async (req, res) => {
+    const username = sanitizeUsername(req.body.username);
+    const connectUserId = String(req.body.connectUserId || "").trim();
+
+    if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
+        return res.status(400).json({ error: "Invalid username or connectUserId" });
+    }
+
+    try {
+        await ensurePlayerExists(username);
+
+        const existingPlayer = await playersCollection.findOne({ name: username });
+
+        if (!existingPlayer) {
+            return res.status(500).json({ error: "Player lookup failed" });
+        }
+
+        if (
+            existingPlayer.connectUserId &&
+            existingPlayer.connectUserId !== "" &&
+            existingPlayer.connectUserId !== connectUserId
+        ) {
+            return res.status(403).json({
+                error: "Username already bound to a different connectUserId"
+            });
+        }
+
+        const conflict = await playersCollection.findOne({
+            connectUserId,
+            name: { $ne: username }
+        });
+
+        if (conflict) {
+            return res.status(403).json({
+                error: "connectUserId already bound to another username"
+            });
+        }
+
+        return res.json({
+            ok: true,
+            hasHybridPassword: !!(existingPlayer.hybridPasswordHash && existingPlayer.hybridPasswordHash !== "")
+        });
+    } catch (err) {
+        console.error("hybridStatus error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
 app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
     const connectUserId = String(req.body.connectUserId || "").trim();
