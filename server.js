@@ -105,6 +105,17 @@ function hashToken(token) {
     return crypto.createHash("sha256").update(String(token)).digest("hex");
 }
 
+function normalizePassword(value) {
+    return String(value || "");
+}
+
+function makeHybridPasswordHash(username, connectUserId, password) {
+    return crypto
+        .createHash("sha256")
+        .update(`${sanitizeUsername(username)}|${String(connectUserId).trim()}|${normalizePassword(password)}`, "utf8")
+        .digest("hex");
+}
+
 function nowTs() {
     return Date.now();
 }
@@ -213,6 +224,7 @@ async function ensurePlayerExists(username) {
             $setOnInsert: {
                 name: username,
                 connectUserId: "",
+                hybridPasswordHash: "",
                 tag: "",
                 effect: "",
                 color: "",
@@ -304,9 +316,14 @@ app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
 app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
     const connectUserId = String(req.body.connectUserId || "").trim();
+    const password = normalizePassword(req.body.password);
 
     if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
         return res.status(400).json({ error: "Invalid username or connectUserId" });
+    }
+
+    if (!password || password.length < 1 || password.length > 128) {
+        return res.status(400).json({ error: "Missing or invalid password" });
     }
 
     try {
@@ -339,7 +356,29 @@ app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
             });
         }
 
-        if (!existingPlayer.connectUserId) {
+        const incomingHash = makeHybridPasswordHash(username, connectUserId, password);
+
+        // first successful PlayerIO login for this hybrid account:
+        if (!existingPlayer.hybridPasswordHash || existingPlayer.hybridPasswordHash === "") {
+            await playersCollection.updateOne(
+                { name: username },
+                {
+                    $set: {
+                        connectUserId,
+                        hybridPasswordHash: incomingHash,
+                        updatedAt: nowTs()
+                    }
+                }
+            );
+        } else {
+            // already registered on hybrid side -> password must match
+            if (existingPlayer.hybridPasswordHash !== incomingHash) {
+                return res.status(403).json({
+                    error: "Wrong hybrid password"
+                });
+            }
+
+            // keep connectUserId refreshed just in case it was blank before
             await playersCollection.updateOne(
                 { name: username },
                 {
