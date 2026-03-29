@@ -112,7 +112,10 @@ function normalizePassword(value) {
 function makeHybridPasswordHash(username, connectUserId, password) {
     return crypto
         .createHash("sha256")
-        .update(`${sanitizeUsername(username)}|${String(connectUserId).trim()}|${normalizePassword(password)}`, "utf8")
+        .update(
+            `${sanitizeUsername(username)}|${sanitizeConnectUserId(connectUserId)}|${normalizePassword(password)}`,
+            "utf8"
+        )
         .digest("hex");
 }
 
@@ -133,22 +136,29 @@ function getEffectValueFromId(id) {
 }
 
 function isValidUsername(name) {
-    return typeof name === "string" && /^[a-z0-9_ ]{3,20}$/.test(name);
+    return typeof name === "string" && /^[a-z0-9_.\- ]{3,30}$/.test(sanitizeUsername(name));
 }
 
 function isValidConnectUserId(value) {
-    return typeof value === "string" && /^[A-Za-z0-9_\-:.]{6,128}$/.test(value);
+    value = sanitizeConnectUserId(value);
+    return /^[A-Za-z0-9_\-:. ]{6,128}$/.test(value);
 }
 
 function isValidBadgeOverride(value) {
     return Number.isInteger(value) && value >= 0 && value <= 10000;
 }
 
+function sanitizeConnectUserId(value) {
+    return String(value || "")
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
 function sanitizeUsername(name) {
     return String(name || "")
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, " ");
+        .trim()                 // remove start/end spaces
+        .toLowerCase()          // normalize casing
+        .replace(/\s+/g, " ");  // collapse multiple spaces into one
 }
 
 function getClientIp(req) {
@@ -315,17 +325,9 @@ app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
 
 app.post("/hybridStatus", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
-    const connectUserId = String(req.body.connectUserId || "").trim();
-
-    console.log("hybridStatus raw username:", req.body.username);
-    console.log("hybridStatus sanitized username:", username);
-    console.log("hybridStatus connectUserId:", connectUserId);
+    const connectUserId = sanitizeConnectUserId(req.body.connectUserId);
 
     if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
-        console.log("hybridStatus invalid input", {
-            usernameValid: isValidUsername(username),
-            connectUserIdValid: isValidConnectUserId(connectUserId)
-        });
         return res.status(400).json({ error: "Invalid username or connectUserId" });
     }
 
@@ -371,7 +373,7 @@ app.post("/hybridStatus", rateLimit(20, 60 * 1000), async (req, res) => {
 
 app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
-    const connectUserId = String(req.body.connectUserId || "").trim();
+    const connectUserId = sanitizeConnectUserId(req.body.connectUserId);
     const password = normalizePassword(req.body.password);
 
     if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
