@@ -317,7 +317,15 @@ app.post("/hybridStatus", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
     const connectUserId = String(req.body.connectUserId || "").trim();
 
+    console.log("hybridStatus raw username:", req.body.username);
+    console.log("hybridStatus sanitized username:", username);
+    console.log("hybridStatus connectUserId:", connectUserId);
+
     if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
+        console.log("hybridStatus invalid input", {
+            usernameValid: isValidUsername(username),
+            connectUserIdValid: isValidConnectUserId(connectUserId)
+        });
         return res.status(400).json({ error: "Invalid username or connectUserId" });
     }
 
