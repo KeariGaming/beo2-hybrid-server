@@ -53,7 +53,7 @@ const client = new MongoClient(uri);
 let playersCollection;
 let sessionsCollection;
 
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
+const SESSION_TTL_MS = 1000 * 60 * 60 * 6; // 6 hours
 const ALLOWED_SHELL_MIN = 1;
 const ALLOWED_SHELL_MAX = 10000;
 const MAX_ROOM_USERS = 50;
@@ -80,6 +80,28 @@ function normalizeOwnedShells(arr) {
     return arr
         .map(v => parseInt(v, 10))
         .filter(v => Number.isInteger(v));
+}
+
+function isValidTagValue(value) {
+    return typeof value === "string" && Object.values(TAG_ID_MAP).includes(value);
+}
+
+function isValidEffectValue(value) {
+    return typeof value === "string" && Object.values(EFFECT_ID_MAP).includes(value);
+}
+
+function isValidHexColor(value) {
+    if (value === "") return true;
+    return typeof value === "string" && /^#?[0-9a-fA-F]{6}$/.test(value);
+}
+
+function normalizeHexColor(value) {
+    value = String(value || "").trim();
+    if (value === "") return "";
+    if (!value.startsWith("#")) {
+        value = "#" + value;
+    }
+    return value.toLowerCase();
 }
 
 function canPlayerEquipShell(playerDoc, shellId) {
@@ -809,9 +831,9 @@ app.get("/getRoomHybridUpdates", rateLimit(120, 60 * 1000), async (req, res) => 
 
 app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
     const username = sanitizeUsername(req.body.user);
-    const tag = String(req.body.tag ?? "");
-    const effect = String(req.body.effect ?? "");
-    const color = String(req.body.color ?? "");
+    const tag = String(req.body.tag ?? "").trim();
+    const effect = String(req.body.effect ?? "").trim();
+    const color = normalizeHexColor(req.body.color ?? "");
     const shellOverride = parseInt(req.body.shellOverride ?? "0", 10) || 0;
     const badgeOverride = parseInt(req.body.badgeOverride ?? "0", 10) || 0;
     const badgeBackgroundOverride = parseInt(req.body.badgeBackgroundOverride ?? "0", 10) || 0;
@@ -820,12 +842,28 @@ app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, re
         return res.status(400).json({ error: "Invalid user" });
     }
 
-    if (tag.length > 32 || effect.length > 32 || color.length > 32) {
-        return res.status(400).json({ error: "Field too long" });
+    if (!isValidTagValue(tag)) {
+        return res.status(400).json({ error: "Invalid tag" });
+    }
+
+    if (!isValidEffectValue(effect)) {
+        return res.status(400).json({ error: "Invalid effect" });
+    }
+
+    if (!isValidHexColor(color)) {
+        return res.status(400).json({ error: "Invalid color" });
     }
 
     if (shellOverride !== 0 && !isValidShellOverride(shellOverride)) {
         return res.status(400).json({ error: "Invalid shellOverride" });
+    }
+
+    if (!isValidBadgeOverride(badgeOverride)) {
+        return res.status(400).json({ error: "Invalid badgeOverride" });
+    }
+
+    if (!isValidBadgeOverride(badgeBackgroundOverride)) {
+        return res.status(400).json({ error: "Invalid badgeBackgroundOverride" });
     }
 
     try {
