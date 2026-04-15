@@ -60,20 +60,18 @@ const MAX_ROOM_USERS = 50;
 const EXCLUSIVE_SHELL_START_ID = 180;
 const DEFAULT_SHELL_ID = 1;
 
-const TAG_ID_MAP = {
-    0: "",
-    1: "[DEV]",
-    2: "[VIP]",
-    3: "[MOD]",
-    4: "[OG]"
-};
+const ALLOWED_TAG_MIN = 0;
+const ALLOWED_TAG_MAX = 1000;
 
-const EFFECT_ID_MAP = {
-    0: "",
-    1: "rainbow",
-    2: "gold",
-    3: "flame"
-};
+const ALLOWED_EFFECT_MIN = 0;
+const ALLOWED_EFFECT_MAX = 1000;
+
+const ALLOWED_BADGE_MIN = 0;
+const ALLOWED_BADGE_MAX = 10000;
+
+const ALLOWED_BADGE_BG_MIN = 0;
+const ALLOWED_BADGE_BG_MAX = 10000;
+
 
 function normalizeOwnedShells(arr) {
     if (!Array.isArray(arr)) return [];
@@ -82,13 +80,6 @@ function normalizeOwnedShells(arr) {
         .filter(v => Number.isInteger(v));
 }
 
-function isValidTagValue(value) {
-    return typeof value === "string" && Object.values(TAG_ID_MAP).includes(value);
-}
-
-function isValidEffectValue(value) {
-    return typeof value === "string" && Object.values(EFFECT_ID_MAP).includes(value);
-}
 
 function isValidHexColor(value) {
     if (value === "") return true;
@@ -149,12 +140,20 @@ function isValidShellOverride(value) {
     return Number.isInteger(value) && value >= ALLOWED_SHELL_MIN && value <= ALLOWED_SHELL_MAX;
 }
 
-function getTagValueFromId(id) {
-    return Object.prototype.hasOwnProperty.call(TAG_ID_MAP, id) ? TAG_ID_MAP[id] : null;
+function isValidTagId(value) {
+    return Number.isInteger(value) && value >= ALLOWED_TAG_MIN && value <= ALLOWED_TAG_MAX;
 }
 
-function getEffectValueFromId(id) {
-    return Object.prototype.hasOwnProperty.call(EFFECT_ID_MAP, id) ? EFFECT_ID_MAP[id] : null;
+function isValidEffectId(value) {
+    return Number.isInteger(value) && value >= ALLOWED_EFFECT_MIN && value <= ALLOWED_EFFECT_MAX;
+}
+
+function isValidBadgeOverride(value) {
+    return Number.isInteger(value) && value >= ALLOWED_BADGE_MIN && value <= ALLOWED_BADGE_MAX;
+}
+
+function isValidBadgeBackgroundOverride(value) {
+    return Number.isInteger(value) && value >= ALLOWED_BADGE_BG_MIN && value <= ALLOWED_BADGE_BG_MAX;
 }
 
 function isValidUsername(name) {
@@ -257,8 +256,8 @@ async function ensurePlayerExists(username) {
                 name: username,
                 connectUserId: "",
                 hybridPasswordHash: "",
-                tag: "",
-                effect: "",
+                tagId: 0,
+                effectId: 0,
                 color: "",
                 shellOverride: 0,
                 badgeOverride: 0,
@@ -643,13 +642,12 @@ app.post("/setMyShell", rateLimit(60, 60 * 1000), async (req, res) => {
 app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
     const token = String(req.body.token || "");
     const tagId = parseInt(req.body.tagId, 10);
-    const tagValue = getTagValueFromId(tagId);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (tagValue === null) {
+    if (!isValidTagId(tagId)) {
         return res.status(400).json({ error: "Invalid tagId" });
     }
 
@@ -664,7 +662,7 @@ app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
             { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
-                    tag: tagValue,
+                    tagId: tagId,
                     updatedAt: nowTs()
                 }
             }
@@ -673,8 +671,7 @@ app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
         return res.json({
             ok: true,
             name: session.name,
-            tagId,
-            tag: tagValue
+            tagId: tagId
         });
     } catch (err) {
         console.error("setMyTag error:", err);
@@ -685,13 +682,12 @@ app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
 app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
     const token = String(req.body.token || "");
     const effectId = parseInt(req.body.effectId, 10);
-    const effectValue = getEffectValueFromId(effectId);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (effectValue === null) {
+    if (!isValidEffectId(effectId)) {
         return res.status(400).json({ error: "Invalid effectId" });
     }
 
@@ -706,7 +702,7 @@ app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
             { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
-                    effect: effectValue,
+                    effectId: effectId,
                     updatedAt: nowTs()
                 }
             }
@@ -715,8 +711,7 @@ app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
         return res.json({
             ok: true,
             name: session.name,
-            effectId,
-            effect: effectValue
+            effectId: effectId
         });
     } catch (err) {
         console.error("setMyEffect error:", err);
@@ -737,8 +732,8 @@ app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
             {
                 projection: {
                     _id: 0,
-                    tag: 1,
-                    effect: 1,
+                    tagId: 1,
+                    effectId: 1,
                     color: 1,
                     shellOverride: 1,
                     badgeOverride: 1,
@@ -754,8 +749,8 @@ app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
         }
 
         return res.json({
-            tag: player.tag || "",
-            effect: player.effect || "",
+            tagId: player.tagId || 0,
+            effectId: player.effectId || 0,
             color: player.color || "",
             shellOverride: player.shellOverride || 0,
             badgeOverride: player.badgeOverride || 0,
@@ -802,8 +797,8 @@ app.get("/getRoomHybridUpdates", rateLimit(120, 60 * 1000), async (req, res) => 
                 projection: {
                     _id: 0,
                     name: 1,
-                    tag: 1,
-                    effect: 1,
+                    tagId: 1,
+                    effectId: 1,
                     color: 1,
                     shellOverride: 1,
                     badgeOverride: 1,
@@ -815,8 +810,8 @@ app.get("/getRoomHybridUpdates", rateLimit(120, 60 * 1000), async (req, res) => 
 
         return res.json(players.map(player => ({
             name: player.name,
-            tag: player.tag || "",
-            effect: player.effect || "",
+            tagId: player.tagId || 0,
+            effectId: player.effectId || 0,
             color: player.color || "",
             shellOverride: player.shellOverride || 0,
             badgeOverride: player.badgeOverride || 0,
@@ -831,23 +826,24 @@ app.get("/getRoomHybridUpdates", rateLimit(120, 60 * 1000), async (req, res) => 
 
 app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
     const username = sanitizeUsername(req.body.user);
-    const tag = String(req.body.tag ?? "").trim();
-    const effect = String(req.body.effect ?? "").trim();
+    const tagId = parseInt(req.body.tagId ?? "0", 10) || 0;
+    const effectId = parseInt(req.body.effectId ?? "0", 10) || 0;
     const color = normalizeHexColor(req.body.color ?? "");
     const shellOverride = parseInt(req.body.shellOverride ?? "0", 10) || 0;
     const badgeOverride = parseInt(req.body.badgeOverride ?? "0", 10) || 0;
     const badgeBackgroundOverride = parseInt(req.body.badgeBackgroundOverride ?? "0", 10) || 0;
+    const ownedShells = Array.isArray(req.body.ownedShells) ? req.body.ownedShells : undefined;
 
     if (!isValidUsername(username)) {
         return res.status(400).json({ error: "Invalid user" });
     }
 
-    if (!isValidTagValue(tag)) {
-        return res.status(400).json({ error: "Invalid tag" });
+    if (!isValidTagId(tagId)) {
+        return res.status(400).json({ error: "Invalid tagId" });
     }
 
-    if (!isValidEffectValue(effect)) {
-        return res.status(400).json({ error: "Invalid effect" });
+    if (!isValidEffectId(effectId)) {
+        return res.status(400).json({ error: "Invalid effectId" });
     }
 
     if (!isValidHexColor(color)) {
@@ -862,29 +858,37 @@ app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, re
         return res.status(400).json({ error: "Invalid badgeOverride" });
     }
 
-    if (!isValidBadgeOverride(badgeBackgroundOverride)) {
+    if (!isValidBadgeBackgroundOverride(badgeBackgroundOverride)) {
         return res.status(400).json({ error: "Invalid badgeBackgroundOverride" });
     }
 
     try {
+        const update = {
+            tagId,
+            effectId,
+            color,
+            shellOverride,
+            badgeOverride,
+            badgeBackgroundOverride,
+            updatedAt: nowTs()
+        };
+
+        if (ownedShells !== undefined) {
+            update.ownedShells = normalizeOwnedShells(ownedShells);
+        }
+
         await ensurePlayerExists(username);
 
         await playersCollection.updateOne(
             { name: username },
-            {
-                $set: {
-                    tag,
-                    effect,
-                    color,
-                    shellOverride,
-                    badgeOverride,
-                    badgeBackgroundOverride,
-                    updatedAt: nowTs()
-                }
-            }
+            { $set: update }
         );
 
-        return res.json({ ok: true });
+        return res.json({
+            ok: true,
+            user: username,
+            update
+        });
     } catch (err) {
         console.error("admin/setTag error:", err);
         return res.status(500).json({ error: "Error" });
