@@ -567,7 +567,7 @@ app.post("/redeemCode", rateLimit(10, 60 * 1000), async (req, res) => {
     }
 
     if (!code || code.length < 3 || code.length > 64) {
-        return res.status(400).json({ error: "Invalid redeem code" });
+        return res.status(400).json({ error: "Code invalid" });
     }
 
     try {
@@ -580,18 +580,18 @@ app.post("/redeemCode", rateLimit(10, 60 * 1000), async (req, res) => {
         const redeemDoc = await redeemCodesCollection.findOne({ code, active: true });
 
         if (!redeemDoc) {
-            return res.status(404).json({ error: "Code not found or inactive" });
+            return res.status(404).json({ error: "Code invalid" });
         }
 
         const usedBy = Array.isArray(redeemDoc.usedBy) ? redeemDoc.usedBy : [];
         const maxUses = Number.isInteger(redeemDoc.maxUses) ? redeemDoc.maxUses : 1;
 
         if (usedBy.indexOf(session.name) !== -1) {
-            return res.status(403).json({ error: "You already used this code" });
+            return res.status(403).json({ error: "You already redeemed this code!" });
         }
 
         if (usedBy.length >= maxUses) {
-            return res.status(403).json({ error: "This code has reached its usage limit" });
+            return res.status(403).json({ error: "Code Limit Reached" });
         }
 
         const rewards = redeemDoc.rewards || {};
@@ -599,28 +599,31 @@ app.post("/redeemCode", rateLimit(10, 60 * 1000), async (req, res) => {
         const ownedTags = normalizeOwnedTags(rewards.ownedTags);
         const ownedEffects = normalizeOwnedEffects(rewards.ownedEffects);
 
-        const update = {
+        const playerUpdate = {
             $set: {
                 updatedAt: nowTs()
-            },
-            $addToSet: {
-                usedBy: session.name
             }
         };
 
+        if (ownedShells.length > 0 || ownedTags.length > 0 || ownedEffects.length > 0) {
+            playerUpdate.$addToSet = {};
+        }
+
         if (ownedShells.length > 0) {
-            update.$addToSet.ownedShells = { $each: ownedShells };
+            playerUpdate.$addToSet.ownedShells = { $each: ownedShells };
         }
+
         if (ownedTags.length > 0) {
-            update.$addToSet.ownedTags = { $each: ownedTags };
+            playerUpdate.$addToSet.ownedTags = { $each: ownedTags };
         }
+
         if (ownedEffects.length > 0) {
-            update.$addToSet.ownedEffects = { $each: ownedEffects };
+            playerUpdate.$addToSet.ownedEffects = { $each: ownedEffects };
         }
 
         await playersCollection.updateOne(
             { name: session.name, connectUserId: session.connectUserId },
-            update
+            playerUpdate
         );
 
         await redeemCodesCollection.updateOne(
@@ -631,6 +634,8 @@ app.post("/redeemCode", rateLimit(10, 60 * 1000), async (req, res) => {
             }
         );
 
+        const popup = redeemDoc.popup || {};
+
         return res.json({
             ok: true,
             code,
@@ -638,6 +643,11 @@ app.post("/redeemCode", rateLimit(10, 60 * 1000), async (req, res) => {
                 ownedShells,
                 ownedTags,
                 ownedEffects
+            },
+            popup: {
+                title: popup.title || "Redeem Code",
+                message: popup.message || "Code redeemed successfully!",
+                iconClass: popup.iconClass || "Icon_Thumb"
             }
         });
     } catch (err) {
