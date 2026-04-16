@@ -52,6 +52,7 @@ const client = new MongoClient(uri);
 
 let playersCollection;
 let sessionsCollection;
+let redeemCodesCollection;
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 6; // 6 hours
 const ALLOWED_SHELL_MIN = 1;
@@ -83,6 +84,13 @@ function normalizeOwnedTags(arr) {
     return arr
         .map(v => parseInt(v, 10))
         .filter(v => Number.isInteger(v));
+}
+
+function normalizeRedeemCode(value) {
+    return String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
 }
 
 function normalizeOwnedEffects(arr) {
@@ -324,9 +332,13 @@ async function start() {
         const db = client.db("beo2");
         playersCollection = db.collection("players");
         sessionsCollection = db.collection("sessions");
+        redeemCodesCollection = db.collection("redeemCodes");
 
         await playersCollection.createIndex({ name: 1 }, { unique: true });
         await playersCollection.createIndex({ updatedAt: 1 });
+
+        await redeemCodesCollection.createIndex({ code: 1 }, { unique: true });
+        await redeemCodesCollection.createIndex({ active: 1 });
         
         await sessionsCollection.deleteMany({
            $or: [
@@ -542,6 +554,94 @@ app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
         });
     } catch (err) {
         console.error("registerSession error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/redeemCode", rateLimit(10, 60 * 1000), async (req, res) => {
+    const token = String(req.body.token || "");
+    const code = normalizeRedeemCode(req.body.code);
+
+    if (!token) {
+        return res.status(400).json({ error: "Missing token" });
+    }
+
+    if (!code || code.length < 3 || code.length > 64) {
+        return res.status(400).json({ error: "Invalid redeem code" });
+    }
+
+    try {
+        const session = await getValidSession(token);
+
+        if (!session) {
+            return res.status(403).json({ error: "Invalid or expired session" });
+        }
+
+        const redeemDoc = await redeemCodesCollection.findOne({ code, active: true });
+
+        if (!redeemDoc) {
+            return res.status(404).json({ error: "Code not found or inactive" });
+        }
+
+        const usedBy = Array.isArray(redeemDoc.usedBy) ? redeemDoc.usedBy : [];
+        const maxUses = Number.isInteger(redeemDoc.maxUses) ? redeemDoc.maxUses : 1;
+
+        if (usedBy.indexOf(session.name) !== -1) {
+            return res.status(403).json({ error: "You already used this code" });
+        }
+
+        if (usedBy.length >= maxUses) {
+            return res.status(403).json({ error: "This code has reached its usage limit" });
+        }
+
+        const rewards = redeemDoc.rewards || {};
+        const ownedShells = normalizeOwnedShells(rewards.ownedShells);
+        const ownedTags = normalizeOwnedTags(rewards.ownedTags);
+        const ownedEffects = normalizeOwnedEffects(rewards.ownedEffects);
+
+        const update = {
+            $set: {
+                updatedAt: nowTs()
+            },
+            $addToSet: {
+                usedBy: session.name
+            }
+        };
+
+        if (ownedShells.length > 0) {
+            update.$addToSet.ownedShells = { $each: ownedShells };
+        }
+        if (ownedTags.length > 0) {
+            update.$addToSet.ownedTags = { $each: ownedTags };
+        }
+        if (ownedEffects.length > 0) {
+            update.$addToSet.ownedEffects = { $each: ownedEffects };
+        }
+
+        await playersCollection.updateOne(
+            { name: session.name, connectUserId: session.connectUserId },
+            update
+        );
+
+        await redeemCodesCollection.updateOne(
+            { _id: redeemDoc._id },
+            {
+                $addToSet: { usedBy: session.name },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        return res.json({
+            ok: true,
+            code,
+            granted: {
+                ownedShells,
+                ownedTags,
+                ownedEffects
+            }
+        });
+    } catch (err) {
+        console.error("redeemCode error:", err);
         return res.status(500).json({ error: "Error" });
     }
 });
