@@ -72,6 +72,51 @@ const ALLOWED_BADGE_MAX = 10000;
 const ALLOWED_BADGE_BG_MIN = 0;
 const ALLOWED_BADGE_BG_MAX = 10000;
 
+const LOCKED_TAG_START_ID = 1;
+const DEFAULT_TAG_ID = 0;
+
+const LOCKED_EFFECT_START_ID = 1;
+const DEFAULT_EFFECT_ID = 0;
+
+function normalizeOwnedTags(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr
+        .map(v => parseInt(v, 10))
+        .filter(v => Number.isInteger(v));
+}
+
+function normalizeOwnedEffects(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr
+        .map(v => parseInt(v, 10))
+        .filter(v => Number.isInteger(v));
+}
+
+function canPlayerEquipTag(playerDoc, tagId) {
+    if (!Number.isInteger(tagId)) {
+        return false;
+    }
+
+    if (tagId < LOCKED_TAG_START_ID) {
+        return true;
+    }
+
+    const ownedTags = normalizeOwnedTags(playerDoc?.ownedTags);
+    return ownedTags.indexOf(tagId) !== -1;
+}
+
+function canPlayerEquipEffect(playerDoc, effectId) {
+    if (!Number.isInteger(effectId)) {
+        return false;
+    }
+
+    if (effectId < LOCKED_EFFECT_START_ID) {
+        return true;
+    }
+
+    const ownedEffects = normalizeOwnedEffects(playerDoc?.ownedEffects);
+    return ownedEffects.indexOf(effectId) !== -1;
+}
 
 function normalizeOwnedShells(arr) {
     if (!Array.isArray(arr)) return [];
@@ -263,6 +308,8 @@ async function ensurePlayerExists(username) {
                 badgeOverride: 0,
                 badgeBackgroundOverride: 0,
                 ownedShells: [],
+                ownedTags: [],
+                ownedEffects: [],
                 updatedAt: nowTs()
             }
         },
@@ -641,13 +688,13 @@ app.post("/setMyShell", rateLimit(60, 60 * 1000), async (req, res) => {
 
 app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
     const token = String(req.body.token || "");
-    const tagId = parseInt(req.body.tagId, 10);
+    const requestedTagId = parseInt(req.body.tagId, 10);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (!isValidTagId(tagId)) {
+    if (!isValidTagId(requestedTagId)) {
         return res.status(400).json({ error: "Invalid tagId" });
     }
 
@@ -658,11 +705,29 @@ app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
             return res.status(403).json({ error: "Invalid or expired session" });
         }
 
+        const playerDoc = await playersCollection.findOne(
+            { name: session.name, connectUserId: session.connectUserId },
+            {
+                projection: {
+                    _id: 0,
+                    ownedTags: 1
+                }
+            }
+        );
+
+        if (!playerDoc) {
+            return res.status(404).json({ error: "Player not found" });
+        }
+
+        const finalTagId = canPlayerEquipTag(playerDoc, requestedTagId)
+            ? requestedTagId
+            : DEFAULT_TAG_ID;
+
         await playersCollection.updateOne(
             { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
-                    tagId: tagId,
+                    tagId: finalTagId,
                     updatedAt: nowTs()
                 }
             }
@@ -671,7 +736,9 @@ app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
         return res.json({
             ok: true,
             name: session.name,
-            tagId: tagId
+            tagId: finalTagId,
+            requestedTagId,
+            fallback: finalTagId !== requestedTagId
         });
     } catch (err) {
         console.error("setMyTag error:", err);
@@ -681,13 +748,13 @@ app.post("/setMyTag", rateLimit(60, 60 * 1000), async (req, res) => {
 
 app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
     const token = String(req.body.token || "");
-    const effectId = parseInt(req.body.effectId, 10);
+    const requestedEffectId = parseInt(req.body.effectId, 10);
 
     if (!token) {
         return res.status(400).json({ error: "Missing token" });
     }
 
-    if (!isValidEffectId(effectId)) {
+    if (!isValidEffectId(requestedEffectId)) {
         return res.status(400).json({ error: "Invalid effectId" });
     }
 
@@ -698,11 +765,29 @@ app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
             return res.status(403).json({ error: "Invalid or expired session" });
         }
 
+        const playerDoc = await playersCollection.findOne(
+            { name: session.name, connectUserId: session.connectUserId },
+            {
+                projection: {
+                    _id: 0,
+                    ownedEffects: 1
+                }
+            }
+        );
+
+        if (!playerDoc) {
+            return res.status(404).json({ error: "Player not found" });
+        }
+
+        const finalEffectId = canPlayerEquipEffect(playerDoc, requestedEffectId)
+            ? requestedEffectId
+            : DEFAULT_EFFECT_ID;
+
         await playersCollection.updateOne(
             { name: session.name, connectUserId: session.connectUserId },
             {
                 $set: {
-                    effectId: effectId,
+                    effectId: finalEffectId,
                     updatedAt: nowTs()
                 }
             }
@@ -711,7 +796,9 @@ app.post("/setMyEffect", rateLimit(60, 60 * 1000), async (req, res) => {
         return res.json({
             ok: true,
             name: session.name,
-            effectId: effectId
+            effectId: finalEffectId,
+            requestedEffectId,
+            fallback: finalEffectId !== requestedEffectId
         });
     } catch (err) {
         console.error("setMyEffect error:", err);
@@ -739,6 +826,8 @@ app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
                     badgeOverride: 1,
                     badgeBackgroundOverride: 1,
                     ownedShells: 1,
+                    ownedTags: 1,
+                    ownedEffects: 1,
                     updatedAt: 1
                 }
             }
@@ -756,6 +845,8 @@ app.get("/getPlayer", rateLimit(120, 60 * 1000), async (req, res) => {
             badgeOverride: player.badgeOverride || 0,
             badgeBackgroundOverride: player.badgeBackgroundOverride || 0,
             ownedShells: normalizeOwnedShells(player.ownedShells),
+            ownedTags: normalizeOwnedTags(player.ownedTags),
+            ownedEffects: normalizeOwnedEffects(player.ownedEffects),
             updatedAt: player.updatedAt || 0
         });
     } catch (err) {
@@ -891,6 +982,156 @@ app.post("/admin/setTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, re
         });
     } catch (err) {
         console.error("admin/setTag error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/admin/grantTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const tagId = parseInt(req.body.tagId, 10);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
+    }
+
+    if (!isValidTagId(tagId) || tagId < LOCKED_TAG_START_ID) {
+        return res.status(400).json({ error: "Invalid tagId" });
+    }
+
+    try {
+        await ensurePlayerExists(username);
+
+        await playersCollection.updateOne(
+            { name: username },
+            {
+                $addToSet: { ownedTags: tagId },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        return res.json({ ok: true, user: username, tagId });
+    } catch (err) {
+        console.error("admin/grantTag error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/admin/revokeTag", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const tagId = parseInt(req.body.tagId, 10);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
+    }
+
+    if (!isValidTagId(tagId) || tagId < LOCKED_TAG_START_ID) {
+        return res.status(400).json({ error: "Invalid tagId" });
+    }
+
+    try {
+        await playersCollection.updateOne(
+            { name: username },
+            {
+                $pull: { ownedTags: tagId },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        const playerDoc = await playersCollection.findOne(
+            { name: username },
+            { projection: { _id: 0, tagId: 1 } }
+        );
+
+        if (playerDoc && parseInt(playerDoc.tagId, 10) === tagId) {
+            await playersCollection.updateOne(
+                { name: username },
+                {
+                    $set: {
+                        tagId: DEFAULT_TAG_ID,
+                        updatedAt: nowTs()
+                    }
+                }
+            );
+        }
+
+        return res.json({ ok: true, user: username, tagId });
+    } catch (err) {
+        console.error("admin/revokeTag error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/admin/grantEffect", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const effectId = parseInt(req.body.effectId, 10);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
+    }
+
+    if (!isValidEffectId(effectId) || effectId < LOCKED_EFFECT_START_ID) {
+        return res.status(400).json({ error: "Invalid effectId" });
+    }
+
+    try {
+        await ensurePlayerExists(username);
+
+        await playersCollection.updateOne(
+            { name: username },
+            {
+                $addToSet: { ownedEffects: effectId },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        return res.json({ ok: true, user: username, effectId });
+    } catch (err) {
+        console.error("admin/grantEffect error:", err);
+        return res.status(500).json({ error: "Error" });
+    }
+});
+
+app.post("/admin/revokeEffect", rateLimit(30, 60 * 1000), requireAdmin, async (req, res) => {
+    const username = sanitizeUsername(req.body.user);
+    const effectId = parseInt(req.body.effectId, 10);
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: "Invalid user" });
+    }
+
+    if (!isValidEffectId(effectId) || effectId < LOCKED_EFFECT_START_ID) {
+        return res.status(400).json({ error: "Invalid effectId" });
+    }
+
+    try {
+        await playersCollection.updateOne(
+            { name: username },
+            {
+                $pull: { ownedEffects: effectId },
+                $set: { updatedAt: nowTs() }
+            }
+        );
+
+        const playerDoc = await playersCollection.findOne(
+            { name: username },
+            { projection: { _id: 0, effectId: 1 } }
+        );
+
+        if (playerDoc && parseInt(playerDoc.effectId, 10) === effectId) {
+            await playersCollection.updateOne(
+                { name: username },
+                {
+                    $set: {
+                        effectId: DEFAULT_EFFECT_ID,
+                        updatedAt: nowTs()
+                    }
+                }
+            );
+        }
+
+        return res.json({ ok: true, user: username, effectId });
+    } catch (err) {
+        console.error("admin/revokeEffect error:", err);
         return res.status(500).json({ error: "Error" });
     }
 });
