@@ -6,7 +6,7 @@ const { MongoClient } = require("mongodb");
 const app = express();
 app.disable("x-powered-by");
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "http://127.0.0.1:5500,http://localhost:5500")
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS)
     .split(",")
     .map(x => x.trim())
     .filter(Boolean);
