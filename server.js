@@ -392,7 +392,6 @@ app.get("/crossdomain.xml", (req, res) => {
 
     res.send(xml);
 });
-});
 
 app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.query.username);
