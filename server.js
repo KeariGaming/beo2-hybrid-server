@@ -378,13 +378,20 @@ app.get("/", (req, res) => {
 
 app.get("/crossdomain.xml", (req, res) => {
     res.type("application/xml");
+
     const xml = [
         '<?xml version="1.0"?>',
-        "<cross-domain-policy>",
-        ...CROSSDOMAIN_ALLOWED.map(domain => `   <allow-access-from domain="${domain}" />`),
-        "</cross-domain-policy>"
+        '<!DOCTYPE cross-domain-policy SYSTEM "http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">',
+        '<cross-domain-policy>',
+        '   <site-control permitted-cross-domain-policies="all"/>',
+        ...CROSSDOMAIN_ALLOWED.map(domain =>
+            `   <allow-access-from domain="${domain}" secure="true" />`
+        ),
+        '</cross-domain-policy>'
     ].join("\n");
+
     res.send(xml);
+});
 });
 
 app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
