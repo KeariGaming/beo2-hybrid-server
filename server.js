@@ -11,6 +11,17 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS)
     .map(x => x.trim())
     .filter(Boolean);
 
+const BLOCKED_USERNAMES = new Set(
+    (process.env.BLOCKED_USERS || "")
+        .split(",")
+        .map(x => sanitizeUsername(x))
+        .filter(Boolean)
+);
+
+function isBlockedUsername(username) {
+    return BLOCKED_USERNAMES.has(username);
+}
+
 const CROSSDOMAIN_ALLOWED = (process.env.CROSSDOMAIN_ALLOWED || "*")
     .split(",")
     .map(x => x.trim())
@@ -396,6 +407,10 @@ app.get("/crossdomain.xml", (req, res) => {
 app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.query.username);
 
+    if (isBlockedUsername(username)) {
+        return res.status(403).send("Account blocked");
+    }
+
     if (!isValidUsername(username)) {
         return res.status(400).send("Invalid username");
     }
@@ -412,6 +427,12 @@ app.get("/register", rateLimit(30, 60 * 1000), async (req, res) => {
 app.post("/hybridStatus", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
     const connectUserId = sanitizeConnectUserId(req.body.connectUserId);
+
+    if (isBlockedUsername(username)) {
+        return res.status(403).json({
+            error: "Account blocked"
+        });
+    }
 
     if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
         return res.status(400).json({ error: "Invalid username or connectUserId" });
@@ -461,6 +482,12 @@ app.post("/registerSession", rateLimit(20, 60 * 1000), async (req, res) => {
     const username = sanitizeUsername(req.body.username);
     const connectUserId = sanitizeConnectUserId(req.body.connectUserId);
     const password = normalizePassword(req.body.password);
+
+    if (isBlockedUsername(username)) {
+        return res.status(403).json({
+            error: "Account blocked"
+        });
+    }
 
     if (!isValidUsername(username) || !isValidConnectUserId(connectUserId)) {
         return res.status(400).json({ error: "Invalid username or connectUserId" });
